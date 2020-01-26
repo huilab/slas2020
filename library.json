@@ -1,0 +1,16 @@
+{
+  "name": "SLAS2020",
+  "keywords": "IoT, oled, screen, encoder, pushbutton, debounce, stepper, motor, sensor, serial",
+  "description": "Arduino library for creating lab tools and IoT devices",
+  "repository":
+  {
+    "type": "git",
+    "url": "https://github.com/huilab/slas2020"
+  },
+  "frameworks": "arduino",
+  "platforms":
+  [
+    "atmelavr",
+    "teensy"
+  ]
+}
