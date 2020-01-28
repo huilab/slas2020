@@ -3,6 +3,7 @@
    Modified from Adafruit IO Analog In Example Example
    Tutorial Link: https://learn.adafruit.com/adafruit-io-basics-analog-input
 
+   Updated 2020 02 26
 */
 
 /************************** Configuration ***********************************/
@@ -30,27 +31,40 @@ U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ SCL, /* data=*/
 
 // photocell state
 double current_light = 0;
-double last_light = -1;
-
-// variables to keep track of timing
-uint32_t task_1_interval = 2000;
-uint32_t task_2_interval = 3000;
-uint32_t task_3_interval = 2000;
-uint32_t last_time_1, last_time_2, last_time_3 = 0;
+// initialize last_light with a value that is never going 
+// to be read to ensure the first data point gets sent
+double last_light = -1; 
 
 // an 8-bit int to keep track of button states
 // A will be stored in bit 0, B in bit 1, and C in bit 2
+uint8_t last_button_state = 0;
 uint8_t button_state = 0;
+ 
+// variables to keep track of timing
+// slow down accel and photo sensors to prevent throttling
+uint32_t task_accel_interval = 20000; // 20 seconds x 3 messages = 9 msg/min
+uint32_t task_photo_interval = 12000; // 12 seconds X 1 message = 5 msg/min
+// button data only gets sent on change, so it is stoll fine to poll often
+// with both other data sets streaming, there is enough left for 
+// 16 button changes per minte (8 presses). Disable other feeds to read buttons more often
+uint32_t task_button_interval = 100;
+
+// keep track of the last time tasks are executed 
+uint32_t last_time_1, last_time_2, last_time_3 = 0;
 
 // set up the 'analog' feed
 AdafruitIO_Feed *analog = io.feed("analog");
 
-// set up the 'accelerometer' feeds
+// set up the accelerometer feeds 'ax' 'ay and 'az'
 AdafruitIO_Feed *accel_x = io.feed("ax");
 AdafruitIO_Feed *accel_y = io.feed("ay");
 AdafruitIO_Feed *accel_z = io.feed("az");
 
+// set up the 'buttons' feed
+AdafruitIO_Feed *button_feed = io.feed("buttons");
+
 void setup() {
+  // start the OLED
   u8g2.begin();
   u8g2_prepare();
 
@@ -59,11 +73,14 @@ void setup() {
 
   // wait for serial monitor to open
   while (! Serial);
-
-
+  
+  // start accelerometer
+  if (! lis.begin(0x18) ) {   // change this to 0x19 for alternative i2c address
+    Serial.println("Could not start LIS3DH");
+  }
 
   // connect to io.adafruit.com
-  Serial.print("Connecting to Adafruit IO");
+  Serial.print("Connecting to Adafruit IO...");
   u8g2.clearBuffer();
   u8g2.setCursor(0, 0);
   u8g2.print("Connecting to Adafruit IO...");
@@ -91,48 +108,51 @@ void setup() {
 
   u8g2.clearBuffer();
   u8g2.setCursor(0, 0);
-  u8g2.print("Success");
+  u8g2.print("Success!");
   u8g2.setCursor(0, 16);
   u8g2.print(io.statusText());
   u8g2.sendBuffer();
-
 }
 
 void loop() {
-
   // io.run(); is required for all sketches.
   // it should always be present at the top of your loop
   // function. it keeps the client connected to
   // io.adafruit.com, and processes any incoming data.
   io.run();
 
+  // update the current time
   uint32_t now = millis();
-  
-  if ( (now - last_time_1) > task_1_interval) {
+
+  // check on tasks
+  if ( (now - last_time_1) > task_accel_interval) {
     //pollAccel();
     last_time_1 = now;
   }
-  if ( (now - last_time_2) > task_2_interval) {
+  if ( (now - last_time_2) > task_photo_interval) {
     current_light = pollPhotoCell();
     last_time_2 = now;
   }
-  if ( (now - last_time_3) > task_3_interval) {
+  if ( (now - last_time_3) > task_button_interval) {
     pollButtons();
     last_time_3 = now;
   }
 
-  // return if the value hasn't changed
-  if (current_light == last_light)
-    return;
+  // only send button data if it has changed
+  if (button_state != last_button_state) {
+    button_feed->save(button_state);
+    last_button_state = button_state;
+  }
 
-  // save the current state to the analog feed
-  Serial.print("sending -> ");
-  Serial.println(current_light);
-  analog->save(current_light);
-
-  // store last photocell state
-  last_light = current_light;
-
+  // only send the light data if it has changed
+  if (current_light != last_light) {
+    Serial.print("sending -> ");
+    Serial.println(current_light);
+    analog->save(current_light);
+    // store last photocell state
+    last_light = current_light;
+  }
+  
 }
 
 void u8g2_prepare(void) {
@@ -160,8 +180,14 @@ void pollAccel() {
   Serial.print(" \tY: "); Serial.print(event.acceleration.y);
   Serial.print(" \tZ: "); Serial.print(event.acceleration.z);
   Serial.println(" m/s^2 ");
+
+  /* Write data to adafruit io */
+  accel_x->save(event.acceleration.x);
+  accel_y->save(event.acceleration.y);
+  accel_z->save(event.acceleration.z);
 }
 
+// read a new value from the photocell
 double pollPhotoCell() {
   u8g2.setCursor(0, 16);
   int sensorValue = analogRead(PHOTOCELL_PIN); // read the input on analog pin 0:
@@ -171,6 +197,7 @@ double pollPhotoCell() {
   return intensity;
 }
 
+// check buttons and set bits of button_state
 void pollButtons() {
   u8g2.setCursor(64, 16);
   if (!digitalRead(BUTTON_A)) {
